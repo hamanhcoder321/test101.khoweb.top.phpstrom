@@ -36,6 +36,14 @@ IMPORT_TEN_MIEN.md
 *.notes.txt
 
 # =====================
+# CRAWL / SCRIPT NỘI BỘ
+# =====================
+/app/Console/Commands/CrawlHSCty.php
+/app/Console/Commands/CrawlProduct.php
+/app/Console/Commands/Website/CrawlHSCtyBase.php
+/app/Console/Commands/Website/CrawlWebsiteBase.php
+
+# =====================
 # IDE / EDITOR
 # =====================
 .idea/
