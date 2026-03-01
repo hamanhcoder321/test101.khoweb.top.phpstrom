@@ -1,0 +1,66 @@
+# ============================================================
+# .gitignore – Laravel Project
+# ============================================================
+
+# =====================
+# LARAVEL CORE
+# =====================
+/vendor/
+/node_modules/
+/bootstrap/cache/
+/.env
+/.env.backup
+/.env.production
+
+# =====================
+# STORAGE & CACHE
+# =====================
+/storage/framework/views/
+/storage/framework/cache/
+/storage/framework/sessions/
+/storage/logs/
+/storage/app/public/
+
+# =====================
+# FILE UPLOAD (người dùng upload)
+# =====================
+/public_html/filemanager/userfiles/imports/
+/public_html/filemanager/userfiles/files/
+/public_html/filemanager/userfiles/images/
+
+# =====================
+# TÀI LIỆU NỘI BỘ (không cần public)
+# =====================
+IMPORT_TEN_MIEN.md
+*.local.md
+*.notes.txt
+
+# =====================
+# IDE / EDITOR
+# =====================
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# =====================
+# LOG & DEBUG
+# =====================
+*.log
+npm-debug.log*
+
+# =====================
+# BUILD OUTPUT
+# =====================
+/public/hot
+/public/storage
+/public/mix-manifest.json
+
+# =====================
+# COMPILED / TEMP
+# =====================
+*.compiled
+*.cache
+*.tmp
