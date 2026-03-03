@@ -65,7 +65,11 @@ class OpenAIService
         $json = json_decode($response, true);
 
         if ($httpCode !== 200 || !isset($json['choices'][0]['message']['content'])) {
-            $errorMsg = isset($json['error']['message']) ? $json['error']['message'] : 'Invalid response from OpenAI (HTTP ' . $httpCode . ')';
+            if (isset($json['error']['message'])) {
+                $errorMsg = '[' . $httpCode . '] ' . $json['error']['message'];
+            } else {
+                $errorMsg = 'OpenAI HTTP ' . $httpCode . ' – ' . mb_substr($response ?? '', 0, 300);
+            }
             throw new \Exception($errorMsg);
         }
 

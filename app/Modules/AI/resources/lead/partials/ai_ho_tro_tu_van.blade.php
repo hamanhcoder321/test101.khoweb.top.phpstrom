@@ -97,11 +97,12 @@
         appendMessage('user', question);
         document.getElementById('question').value = '';
 
-        fetch('/api/ai/lead', {
+        fetch('/api/ai/lead/edit', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Accept': 'application/json'
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
             },
             body: JSON.stringify({
                 lead_id: document.getElementById('lead_id').value,
@@ -114,7 +115,7 @@
 
                 try {
                     const data = JSON.parse(text);
-                    appendMessage('ai', data.answer || data.error);
+                    appendMessage('ai', data.answer || data.error || 'Không có phản hồi');
                 } catch (e) {
                     console.error('HTML RESPONSE:', text);
                     appendMessage('ai', '❌ Backend trả HTML, xem console');
