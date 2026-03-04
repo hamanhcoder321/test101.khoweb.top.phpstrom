@@ -160,19 +160,24 @@
     .ai-chat-footer button:hover { background: #0b5ed7; }
 </style>
 
+{{-- Admin ID để phân biệt history theo tài khoản --}}
+<input type="hidden" id="ai-admin-id" value="{{ Auth::guard('admin')->id() }}">
+
 {{-- Nút bong bóng --}}
-<button id="ai-chat-toggle" title="Trợ lý Sales AI" onclick="toggleAIChat()">🤖</button>
+<button id="ai-chat-toggle" title="Trợ lý AI" onclick="toggleAIChat()">🤖</button>
 
 {{-- Cửa sổ chat --}}
 <div id="ai-chat-widget">
     <div class="ai-chat-header">
-        <span>🤖 Trợ lý Sales</span>
-        <span class="ai-close-btn" onclick="toggleAIChat()">✕</span>
+        <span>🤖 Trợ lý AI</span>
+        <div style="display:flex;gap:8px;align-items:center">
+            <span title="Xóa lịch sử chat" onclick="aiClearContext()" style="cursor:pointer;opacity:0.8;font-size:14px" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">🗑️</span>
+            <span class="ai-close-btn" onclick="toggleAIChat()">✕</span>
+        </div>
     </div>
 
-    {{-- Hint: gợi ý cách dùng --}}
     <div id="ai-hint-bar">
-        💡 Nhập <kbd>SĐT</kbd> để tra cứu khách hàng, hoặc hỏi thẳng câu hỏi.
+        💡 Nhập <kbd>SĐT</kbd> để tra cứu thông tin khách hàng, hoặc nhập câu hỏi bất kỳ.
     </div>
 
     {{-- Context bar: hiện khi đã load khách hàng --}}
@@ -182,17 +187,69 @@
     </div>
 
     <div id="ai-chat-body">
-        <div class="ai-msg bot">Xin chào 👋 Nhập SĐT khách hàng để tra cứu thông tin, hoặc hỏi trực tiếp về lead hiện tại.</div>
+        <div class="ai-msg bot" data-no-save="true">Xin chào 👋 Bạn cần tra cứu khách hàng hay hỏi điều gì? Tôi sẵn sàng hỗ trợ.</div>
     </div>
     <div class="ai-chat-footer">
-        <input type="text" id="ai-question" placeholder="Nhập SĐT hoặc câu hỏi..." onkeydown="if(event.key==='Enter') sendAI()">
+        <input type="text" id="ai-question" placeholder="Nhập câu hỏi..." onkeydown="if(event.key==='Enter') sendAI()">
         <button onclick="sendAI()">Gửi</button>
     </div>
 </div>
 
 <script>
-    // ── Lưu context khách hàng hiện tại ──────────────────────────────────
-    var aiPhoneContext = null;  // { tel, summary }
+    // ── Key localStorage theo tài khoản ──────────────────────────────────
+    var _adminId = document.getElementById('ai-admin-id')?.value || 'guest';
+    var _storageKey = 'ai_chat_msgs_'  + _adminId;
+    var _ctxKey     = 'ai_chat_ctx_'   + _adminId;
+
+    var aiPhoneContext = null;  // { tel }
+
+    // ── Lưu / đọc localStorage ──────────────────────────────────────────
+    function saveMsgs() {
+        const body = document.getElementById('ai-chat-body');
+        const msgs = [];
+        body.querySelectorAll('.ai-msg').forEach(el => {
+            // Bỏ qua: typing indicator, messages tạm thời, welcome message
+            if (el.classList.contains('typing')) return;
+            if (el.dataset.noSave) return;
+            if (el.innerText === '...' || el.innerText.startsWith('🔍 Đang tra cứu')) return;
+            msgs.push({ cls: el.className, text: el.innerText });
+        });
+        try { localStorage.setItem(_storageKey, JSON.stringify(msgs.slice(-60))); } catch(e){}
+    }
+
+    function loadMsgs() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(_storageKey) || '[]');
+            if (!saved.length) return;
+            const body = document.getElementById('ai-chat-body');
+            body.innerHTML = ''; // xóa welcome mặc định
+            saved.forEach(m => {
+                const div = document.createElement('div');
+                div.className = m.cls;
+                div.innerText = m.text;
+                body.appendChild(div);
+            });
+            body.scrollTop = 99999;
+        } catch(e){}
+    }
+
+    function saveCtx() {
+        try {
+            if (aiPhoneContext) localStorage.setItem(_ctxKey, JSON.stringify(aiPhoneContext));
+            else localStorage.removeItem(_ctxKey);
+        } catch(e){}
+    }
+
+    function loadCtx() {
+        try {
+            const c = JSON.parse(localStorage.getItem(_ctxKey) || 'null');
+            if (c && c.tel) {
+                aiPhoneContext = c;
+                document.getElementById('ai-context-bar').classList.add('show');
+                document.getElementById('ai-ctx-label').innerText = '📋 Đang hỏi về: ' + c.tel;
+            }
+        } catch(e){}
+    }
 
     function toggleAIChat() {
         const w = document.getElementById('ai-chat-widget');
@@ -209,6 +266,8 @@
         div.innerText  = text;
         body.appendChild(div);
         body.scrollTop = 99999;
+        // Lưu vào localStorage sau mỗi tin nhắn
+        saveMsgs();
         return div;
     }
 
@@ -217,22 +276,39 @@
         return el ? el.value : '';
     }
 
-    // Nhận diện SĐT Việt Nam: bắt đầu 0 + 9-10 chữ số
-    function isPhoneNumber(str) {
-        return /^(0[0-9]{8,10})$/.test(str.replace(/\s/g, ''));
+    // Tìm SĐT Việt Nam trong chuỗi bất kỳ (0 + 9-10 chữ số)
+    function extractPhone(str) {
+        const m = str.match(/0[3-9][0-9]{8}/);
+        return m ? m[0] : null;
+    }
+
+    // Tách SĐT ra khỏi câu hỏi
+    function extractQuestion(str, phone) {
+        return str.replace(phone, '').replace(/^[\s\-,:]+|[\s\-,:]+$/g, '').trim();
     }
 
     function aiClearContext() {
         aiPhoneContext = null;
+        saveCtx();
+        // Xóa toàn bộ localStorage của user này
+        localStorage.removeItem(_storageKey);
+        localStorage.removeItem(_ctxKey);
         document.getElementById('ai-context-bar').classList.remove('show');
-        aiAppendMsg('bot', '🗑️ Đã xóa ngữ cảnh. Nhập SĐT mới hoặc hỏi câu hỏi khác.');
+        // Reset DOM về welcome message (data-no-save → không được lưu)
+        const body = document.getElementById('ai-chat-body');
+        body.innerHTML = '<div class="ai-msg bot" data-no-save="true">Xin chào 👋 Bạn cần tra cứu khách hàng hay hỏi điều gì? Tôi sẵn sàng hỗ trợ.</div>';
     }
 
     function setAIContext(tel, summary) {
         aiPhoneContext = { tel: tel };
-        document.getElementById('ai-ctx-label').innerText = '📋 ' + summary;
+        saveCtx();
+        document.getElementById('ai-ctx-label').innerText = '📋 Đang hỏi về: ' + tel;
         document.getElementById('ai-context-bar').classList.add('show');
     }
+
+    // ── Khởi tạo: load lại history khi trang load ─────────────────
+    loadMsgs();
+    loadCtx();
 
     function sendAI() {
         const input    = document.getElementById('ai-question');
@@ -241,11 +317,17 @@
 
         const cleanInput = rawInput.replace(/\s/g, '');
 
-        // ── Trường hợp 1: Nhập SĐT → tra cứu khách hàng ──────────────
-        if (isPhoneNumber(cleanInput)) {
-            aiAppendMsg('user', '🔍 Tra cứu SĐT: ' + rawInput);
+        // ── Trường hợp 1: Phát hiện SĐT trong câu nhập ────────────────
+        // Hỗ trợ cả: chỉ nhập SĐT, hoặc nhập SĐT + câu hỏi cùng lúc
+        // VD: "0981263469" hoặc "0981263469 khách cần tư vấn gì?"
+        const detectedPhone = extractPhone(rawInput);
+        if (detectedPhone) {
+            const questionPart = extractQuestion(rawInput, detectedPhone);
+            const displayQuestion = questionPart || 'Tóm tắt thông tin khách hàng này';
+
+            aiAppendMsg('user', rawInput);
             input.value = '';
-            const typingDiv = aiAppendMsg('typing', 'Đang tìm thông tin khách hàng...');
+            const typingDiv = aiAppendMsg('typing', '🔍 Đang tra cứu SĐT ' + detectedPhone + '...');
 
             fetch('/api/ai/phone', {
                 method: 'POST',
@@ -254,19 +336,18 @@
                     'Accept': 'application/json',
                     'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
                 },
-                body: JSON.stringify({ tel: cleanInput, question: 'Tóm tắt thông tin khách hàng này' })
+                body: JSON.stringify({ tel: detectedPhone, question: displayQuestion })
             })
             .then(async r => {
-                const data = await r.json();
+                const data = await r.json().catch(() => ({}));
                 typingDiv.remove();
 
                 if (data.summary) {
-                    // Hiện banner context
-                    setAIContext(cleanInput, data.summary);
-                    // Hiện summary trong chat
+                    setAIContext(detectedPhone, data.summary);
                     aiAppendMsg('summary', data.summary);
                 }
-                aiAppendMsg('bot', data.answer || data.error || 'Không có phản hồi');
+                const reply = data.answer || data.error || 'Tôi chưa hiểu câu hỏi này, bạn có thể diễn đạt lại không?';
+                aiAppendMsg('bot', reply);
                 document.getElementById('ai-chat-body').scrollTop = 99999;
             })
             .catch(() => {
@@ -293,14 +374,16 @@
                 body: JSON.stringify({ tel: aiPhoneContext.tel, question: rawInput })
             })
             .then(async r => {
-                const data = await r.json();
+                const data = await r.json().catch(() => ({}));
                 typingDiv.className = 'ai-msg bot';
-                typingDiv.innerText = data.answer || data.error || 'Không có phản hồi';
+                typingDiv.innerText = data.answer || data.error || 'Tôi chưa hiểu câu hỏi này, bạn có thể diễn đạt lại không?';
+                saveMsgs();
                 document.getElementById('ai-chat-body').scrollTop = 99999;
             })
             .catch(() => {
                 typingDiv.className = 'ai-msg bot';
                 typingDiv.innerText = '❌ Không kết nối được server.';
+                saveMsgs();
             });
             return;
         }
@@ -323,45 +406,27 @@
                 try {
                     const data = JSON.parse(text);
                     typingDiv.className = 'ai-msg bot';
-                    typingDiv.innerText = data.answer || data.error || 'Không có phản hồi';
+                    typingDiv.innerText = data.answer || data.error || 'Câu hỏi này không có trong dữ liệu, vui lòng nhập số điện thoại để AI tra cứu và trả lời.';
                 } catch (e) {
                     typingDiv.className = 'ai-msg bot';
                     typingDiv.innerText = '❌ Lỗi kết nối. Thử lại sau.';
                 }
+                saveMsgs();
                 document.getElementById('ai-chat-body').scrollTop = 99999;
             })
             .catch(() => {
                 typingDiv.className = 'ai-msg bot';
                 typingDiv.innerText = '❌ Không kết nối được server.';
+                saveMsgs();
             });
             return;
         }
 
-        // Không có SĐT, không có lead_id → hỏi tự do /api/ai/ask
-        fetch('/api/ai/ask', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json',
-                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
-            },
-            body: JSON.stringify({ question: rawInput })
-        })
-        .then(async r => {
-            const text = await r.text();
-            try {
-                const data = JSON.parse(text);
-                typingDiv.className = 'ai-msg bot';
-                typingDiv.innerText = data.answer || data.error || 'Không có phản hồi';
-            } catch (e) {
-                typingDiv.className = 'ai-msg bot';
-                typingDiv.innerText = '❌ Lỗi kết nối. Thử lại sau.';
-            }
-            document.getElementById('ai-chat-body').scrollTop = 99999;
-        })
-        .catch(() => {
-            typingDiv.className = 'ai-msg bot';
-            typingDiv.innerText = '❌ Không kết nối được server.';
-        });
+        // Không có SĐT, không có lead_id, không có context
+        // → Trả lời ngay, không gọi API
+        typingDiv.className = 'ai-msg bot';
+        typingDiv.innerText = '💡 Câu hỏi này không có trong dữ liệu. Vui lòng nhập số điện thoại khách hàng để Trợ lý AI tra cứu và trả lời.';
+        saveMsgs();
+        document.getElementById('ai-chat-body').scrollTop = 99999;
     }
 </script>

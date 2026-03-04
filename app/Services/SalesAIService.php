@@ -8,18 +8,30 @@ class SalesAIService
     /** @var OpenAIService */
     protected $ai;
 
+    // System prompt chung cho AI – áp dụng cho mọi cuộc hội thoại
+    const SYSTEM_PROMPT = "Bạn là TRỢ LÝ AI thông minh trong hệ thống CRM, hỗ trợ nhân viên sales và chăm sóc khách hàng.
+
+NGUYÊN TẮC QUAN TRỌNG:
+- Luôn phản hồi bằng tiếng Việt, ngắn gọn, tự nhiên như người thật
+- Nếu câu hỏi không rõ nghĩa → hỏi lại: 'Bạn có thể nói rõ hơn về...' hoặc 'Ý bạn là...?'
+- Nếu không có dữ liệu liên quan → nói thật: 'Tôi không tìm thấy thông tin về...'
+- Trả lời được MỌI câu hỏi: CRM, sales, marketing, kỹ thuật, kiến thức chung
+- Không bịa số liệu, không đoán mò khi không có dữ liệu thực
+- Ưu tiên thực tế, hành động cụ thể hơn lý thuyết chung chung
+- KHÔNG BAO GIỜ trả lời trống hoặc vô nghĩa";
+
     public function __construct()
     {
         $this->ai = new OpenAIService();
     }
 
     /**
-     * Hỏi về 1 lead theo lead_id (cũ - giữ nguyên)
+     * Hỏi về 1 lead theo lead_id
      */
     public function askLead(array $lead, string $question): string
     {
-        $prompt = $this->buildPrompt($lead, $question);
-        return $this->ai->chat($prompt);
+        $userMsg = $this->buildLeadPrompt($lead, $question);
+        return $this->ai->chat($userMsg, self::SYSTEM_PROMPT, 1200);
     }
 
     /**
@@ -27,8 +39,8 @@ class SalesAIService
      */
     public function askByPhone(array $ctx, string $question): string
     {
-        $prompt = $this->buildPhonePrompt($ctx, $question);
-        return $this->ai->chat($prompt, null, 1500);
+        $userMsg = $this->buildPhonePrompt($ctx, $question);
+        return $this->ai->chat($userMsg, self::SYSTEM_PROMPT, 1500);
     }
 
     /**
@@ -36,149 +48,141 @@ class SalesAIService
      */
     public function askGeneral(string $question): string
     {
-        $prompt = "Bạn là TRỢ LÝ AI cho nhân viên SALE trong hệ thống CRM.\nHãy trả lời câu hỏi dưới đây một cách ngắn gọn, thực tế, hữu ích.\n\nCÂU HỎI: {$question}";
-        return $this->ai->chat($prompt, null, 1000);
+        // Hỏi tự do: AI trả lời bất kỳ câu hỏi gì
+        return $this->ai->chat($question, self::SYSTEM_PROMPT, 1000);
     }
 
     // ──────────────────────────────────────────────────────────────
     // PRIVATE HELPERS
     // ──────────────────────────────────────────────────────────────
 
-    private function buildPrompt(array $lead, string $question): string
+    private function buildLeadPrompt(array $lead, string $question): string
     {
-        return "
-Bạn là TRỢ LÝ AI cho TELESALE trong hệ thống CRM.
+        $fields = [];
+        $map = [
+            'Tên khách'          => $lead['name'] ?? '',
+            'SĐT'                => $lead['phone'] ?? '',
+            'Email'              => $lead['email'] ?? '',
+            'Khu vực'            => $lead['location'] ?? '',
+            'Nguồn lead'         => $lead['source'] ?? '',
+            'Dịch vụ quan tâm'   => $lead['service'] ?? '',
+            'Nhu cầu'            => $lead['need'] ?? '',
+            'Trạng thái'         => $lead['status'] ?? '',
+            'Mức quan tâm'       => $lead['rate'] ?? '',
+            'Lần liên hệ cuối'   => $lead['last_contact'] ?? '',
+            'Sản phẩm tư vấn'    => $lead['product'] ?? '',
+            'Lý do từ chối'      => $lead['reason_refusal'] ?? '',
+            'Công ty'            => $lead['company'] ?? '',
+            'Tag'                => $lead['tags'] ?? '',
+        ];
+        foreach ($map as $label => $value) {
+            if (!empty(trim($value))) {
+                $fields[] = "• {$label}: {$value}";
+            }
+        }
+        $info = $fields ? implode("\n", $fields) : '(Không có thông tin)';
 
-NGUYÊN TẮC:
-- Chỉ dùng dữ liệu lead được cung cấp
-- Không bịa, không suy đoán ngoài dữ liệu
-- Trả lời như một nhân viên sales kinh nghiệm
-- Ưu tiên hành động thực tế: gọi lại, tư vấn, xử lý từ chối
-
-THÔNG TIN LEAD:
-Tên khách: {$lead['name']}
-SĐT: {$lead['phone']}
-Email: {$lead['email']}
-Khu vực: {$lead['location']}
-Nguồn lead: {$lead['source']}
-Dịch vụ quan tâm: {$lead['service']}
-Dự án: {$lead['project']}
-Chủ đề: {$lead['topic']}
-Nhu cầu: {$lead['need']}
-Trạng thái: {$lead['status']}
-Mức độ quan tâm: {$lead['rate']}
-Lần liên hệ cuối: {$lead['last_contact']}
-Sản phẩm tư vấn: {$lead['product']}
-Ưu đãi: {$lead['discount']}
-Lý do từ chối: {$lead['reason_refusal']}
-Ngày nhận lead: {$lead['received_date']}
-Tag: {$lead['tags']}
-Công ty: {$lead['company']}
-
-CÂU HỎI CỦA TELESALE:
-{$question}
-";
+        return "THÔNG TIN KHÁCH HÀNG:\n{$info}\n\nCÂU HỎI: {$question}";
     }
 
     private function buildPhonePrompt(array $ctx, string $question): string
     {
-        $tel  = $ctx['tel'] ?? '';
-        $user = $ctx['user'] ?? null;
+        $tel         = $ctx['tel'] ?? '';
+        $user        = $ctx['user'] ?? null;
+        $canSeeMoney = $ctx['can_see_money'] ?? false;
 
         // ── Thông tin khách hàng đã ký (bảng users) ─────────────
-        $userSection = "KHÔNG CÓ (chưa ký hợp đồng)";
+        $userSection = "Chưa có hợp đồng chính thức trong hệ thống.";
         if ($user) {
-            $userSection = implode("\n", [
-                "  Tên: {$user->name}",
-                "  SĐT: {$user->tel}",
-                "  Email: " . ($user->email ?? ''),
-                "  Ngày đăng ký: " . ($user->created_at ?? ''),
-            ]);
+            $userSection = "• Tên: {$user->name}\n• SĐT: {$user->tel}\n• Email: " . ($user->email ?? '') . "\n• Ngày đăng ký: " . ($user->created_at ?? '');
         }
 
         // ── Leads (khách tiềm năng) ───────────────────────────────
-        $leadsSection = "KHÔNG CÓ";
+        $leadsSection = "Không có thông tin lead.";
         if (!empty($ctx['leads'])) {
             $lines = [];
             foreach ($ctx['leads'] as $i => $l) {
                 $l = (object)$l;
-                $lines[] = "  Lead #" . ($i+1) . ": {$l->name} | trạng thái: {$l->status} | mức quan tâm: {$l->rate} | dịch vụ: {$l->service} | nhu cầu: {$l->need} | lần liên hệ cuối: {$l->contacted_log_last}";
+                $parts = array_filter([
+                    $l->name ?? '',
+                    $l->status  ? "trạng thái: {$l->status}"  : '',
+                    $l->rate    ? "mức quan tâm: {$l->rate}"  : '',
+                    $l->service ? "dịch vụ: {$l->service}"    : '',
+                    $l->need    ? "nhu cầu: " . mb_substr($l->need, 0, 100) : '',
+                ]);
+                $lines[] = "  #" . ($i+1) . ": " . implode(' | ', $parts);
             }
             $leadsSection = implode("\n", $lines);
         }
 
-        // ── Lịch sử chăm sóc (lead_contacted_log) ────────────────
-        $logSection = "KHÔNG CÓ";
+        // ── Lịch sử chăm sóc ─────────────────────────────────────
+        $logSection = "Chưa có lịch sử chăm sóc.";
         if (!empty($ctx['contact_logs'])) {
             $lines = [];
             foreach ($ctx['contact_logs'] as $log) {
-                $log = (object)$log;
+                $log   = (object)$log;
                 $title = !empty($log->title) ? "[{$log->title}] " : '';
-                $note  = mb_substr($log->note ?? '', 0, 200);
-                $lines[] = "  [{$log->created_at}] {$log->admin_name}: {$title}{$note}";
+                $note  = mb_substr($log->note ?? '', 0, 150);
+                $admin = $log->admin_name ?? 'Sale';
+                $lines[] = "  [{$log->created_at}] {$admin}: {$title}{$note}";
             }
             $logSection = implode("\n", $lines);
         }
 
-        // ── Hợp đồng (bills) ─────────────────────────────────────
-        $billsSection = "KHÔNG CÓ";
+        // ── Hợp đồng ─────────────────────────────────────────────
+        $billsSection = "Không có hợp đồng.";
         if (!empty($ctx['bills'])) {
             $lines = [];
             foreach ($ctx['bills'] as $b) {
                 $b = (object)$b;
-                $tongTien   = number_format($b->total_price, 0, '.', '.');
-                $daThanhToan = number_format($b->total_received ?? 0, 0, '.', '.');
-                $lines[] = "  HĐ #{$b->id}: {$b->domain} | {$tongTien}đ | đã thu: {$daThanhToan}đ | ký: {$b->registration_date} | hết hạn: {$b->expiry_date} | ghi chú: {$b->customer_note}";
+                $line = "  • {$b->domain} | ký: {$b->registration_date} | hết hạn: {$b->expiry_date} | tình trạng: {$b->status}";
+                if ($canSeeMoney && isset($b->total_price)) {
+                    $line .= " | giá: " . number_format($b->total_price, 0, '.', '.') . "đ";
+                    $line .= " | đã thu: " . number_format($b->total_received ?? 0, 0, '.', '.') . "đ";
+                }
+                if (!empty($b->customer_note)) {
+                    $line .= " | ghi chú: {$b->customer_note}";
+                }
+                $lines[] = $line;
             }
             $billsSection = implode("\n", $lines);
         }
 
-        // ── Lịch sử thanh toán (bill_receipts) ───────────────────
-        $receiptSection = "KHÔNG CÓ";
-        if (!empty($ctx['bill_receipts'])) {
-            $lines = [];
-            foreach ($ctx['bill_receipts'] as $r) {
-                $r = (object)$r;
-                $so = number_format($r->price, 0, '.', '.');
-                $lines[] = "  [{$r->date}] {$so}đ | HĐ #{$r->bill_id} | ghi chú: {$r->note}";
+        // ── Lịch sử thanh toán ───────────────────────────────────
+        $receiptSection = '';
+        if ($canSeeMoney) {
+            $receiptSection = "\n[LỊCH SỬ THANH TOÁN]\n";
+            if (!empty($ctx['bill_receipts'])) {
+                $lines = [];
+                foreach ($ctx['bill_receipts'] as $r) {
+                    $r = (object)$r;
+                    $lines[] = "  [{$r->date}] " . number_format($r->price, 0, '.', '.') . "đ | ghi chú: {$r->note}";
+                }
+                $receiptSection .= implode("\n", $lines);
+            } else {
+                $receiptSection .= "Chưa có lịch sử thanh toán.";
             }
-            $receiptSection = implode("\n", $lines);
         }
 
-        return "
-Bạn là TRỢ LÝ AI cho SALE trong hệ thống CRM.
+        if (!$canSeeMoney) {
+            $receiptSection = "\n[LỊCH SỬ THANH TOÁN]\n(Bạn không có quyền xem thông tin tài chính)";
+        }
 
-NGUYÊN TẮC:
-- Chỉ dùng dữ liệu được cung cấp bên dưới, không bịa thêm
-- Trả lời ngắn gọn, rõ ràng, thực tế
-- Nếu không có dữ liệu liên quan thì nói rõ là không có thông tin
+        return "DỮ LIỆU KHÁCH HÀNG - SĐT: {$tel}
 
-======= GIẢI THÍCH CÁC BẢNG DỮ LIỆU =======
-• Bảng USERS     : Lưu thông tin khách hàng ĐÃ KÝ hợp đồng
-• Bảng LEADS     : Lưu thông tin khách hàng TIỀM NĂNG (quan tâm nhưng chưa ký)
-• Bảng LEAD_CONTACTED_LOG : Lịch sử chăm sóc khách – sale ghi chú mỗi lần liên hệ
-• Bảng BILLS     : Danh sách hợp đồng đã ký của khách
-• Bảng BILL_RECEIPTS : Lịch sử thanh toán tiền hợp đồng của khách
-
-======= DỮ LIỆU KHÁCH HÀNG SĐT: {$tel} =======
-
-[KHÁCH HÀNG ĐÃ KÝ HỢP ĐỒNG - bảng users]
+[THÔNG TIN KÝ HỢP ĐỒNG]
 {$userSection}
 
-[KHÁCH HÀNG TIỀM NĂNG - bảng leads]
+[THÔNG TIN LEAD TIỀM NĂNG]
 {$leadsSection}
 
-[LỊCH SỬ CHĂM SÓC - bảng lead_contacted_log]
+[LỊCH SỬ CHĂM SÓC - 5 gần nhất]
 {$logSection}
 
-[HỢP ĐỒNG - bảng bills]
+[HỢP ĐỒNG]
 {$billsSection}
-
-[LỊCH SỬ THANH TOÁN - bảng bill_receipts]
 {$receiptSection}
 
-======= CÂU HỎI CỦA SALE =======
-{$question}
-";
+CÂU HỎI: {$question}";
     }
 }
