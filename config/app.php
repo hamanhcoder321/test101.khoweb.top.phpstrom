@@ -188,7 +188,7 @@ return [
         TorMorten\Eventy\EventBladeServiceProvider::class,
         App\Library\JWT\Providers\JWTAuthServiceProvider::class,
         App\CRMDV\Providers\CRMDVServiceProvider::class,
-        App\Modules\AI\Providers\ChatAIServiceProvider::class,
+        App\AI\Providers\ChatAIServiceProvider::class,
         
 //        Harimayco\Menu\MenuServiceProvider::class,
 //        Spatie\Backup\BackupServiceProvider::class,

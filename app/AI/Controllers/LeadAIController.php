@@ -1,7 +1,8 @@
 <?php
-namespace App\Modules\AI\Controllers;
+namespace App\AI\Controllers;
+
 use App\CRMDV\Models\Lead;
-use App\Services\SalesAIService;
+use App\AI\Services\SalesAIService;
 use App\Http\Helpers\CommonHelper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -42,22 +43,16 @@ class LeadAIController extends Controller
                 'company'        => $lead->company ?? '',
             ];
 
-            $ai = new SalesAIService();
+            $ai     = new SalesAIService();
             $answer = $ai->askLead($leadData, $request->question);
 
             return response()->json(['answer' => $answer]);
 
         } catch (\Throwable $e) {
-            return response()->json([
-                'error' => $e->getMessage()
-            ], 500);
+            return response()->json(['error' => $e->getMessage()], 500);
         }
     }
 
-    /**
-     * Tra cứu khách hàng theo SĐT, query 5 bảng, đưa context cho AI
-     * Có phân quyền: chỉ role có quyền mới thấy dữ liệu tiền nong
-     */
     public function askByPhone(Request $request)
     {
         try {
@@ -68,14 +63,10 @@ class LeadAIController extends Controller
                 return response()->json(['error' => 'Vui lòng nhập số điện thoại'], 400);
             }
 
-            // ── Kiểm tra quyền xem dữ liệu tiền nong ────────────────────────
             $adminUser   = Auth::guard('admin')->user();
-            $roleName    = $adminUser
-                ? CommonHelper::getRoleName($adminUser->id, 'name')
-                : '';
+            $roleName    = $adminUser ? CommonHelper::getRoleName($adminUser->id, 'name') : '';
             $canSeeMoney = in_array($roleName, $this->roleCanSeeMoney);
 
-            // ── 1. LEADS (khách hàng tiềm năng) ──────────────────────────────
             $leads = DB::table('leads')
                 ->where('tel', $tel)
                 ->orWhere('tel', ltrim($tel, '0'))
@@ -83,7 +74,6 @@ class LeadAIController extends Controller
                        'service','need','company','tinh','contacted_log_last',
                        'reason_refusal','received_date','tags']);
 
-            // ── 2. LEAD_CONTACTED_LOG (lịch sử chăm sóc) ─────────────────────
             $contactLogs = collect();
             if ($leads->isNotEmpty()) {
                 $leadIds = $leads->pluck('id')->toArray();
@@ -95,25 +85,19 @@ class LeadAIController extends Controller
                     ->get(['l.lead_id', 'l.note', 'l.title', 'l.created_at', 'a.name as admin_name']);
             }
 
-            // ── 3. USERS (khách đã ký hợp đồng) ──────────────────────────────
             $user = DB::table('users')
                 ->where('tel', $tel)
                 ->orWhere('tel', ltrim($tel, '0'))
                 ->first(['id','name','tel','email','created_at']);
 
-            // ── 4. BILLS (hợp đồng) ───────────────────────────────────────────
             $bills        = collect();
             $billReceipts = collect();
             if ($user) {
-                // Cột an toàn – ai cũng thấy
                 $billCols = ['id','domain','service_id','registration_date',
                              'expiry_date','status','auto_extend','customer_note'];
-
-                // Cột tiền – chỉ role có quyền mới thấy
                 if ($canSeeMoney) {
                     $billCols = array_merge($billCols, ['total_price','total_received','account_note']);
                 }
-
                 $bills = DB::table('bills')
                     ->where('customer_id', $user->id)
                     ->whereNull('deleted_at')
@@ -121,7 +105,6 @@ class LeadAIController extends Controller
                     ->limit(8)
                     ->get($billCols);
 
-                // ── 5. BILL_RECEIPTS – chỉ query nếu có quyền xem tiền ────────
                 if ($canSeeMoney && $bills->isNotEmpty()) {
                     $billIds = $bills->pluck('id')->toArray();
                     $billReceipts = DB::table('bill_receipts')
@@ -133,7 +116,6 @@ class LeadAIController extends Controller
                 }
             }
 
-            // ── Kiểm tra không tìm thấy ──────────────────────────────────────
             if ($leads->isEmpty() && !$user) {
                 return response()->json([
                     'answer'  => "❌ Không tìm thấy khách hàng với SĐT: {$tel}. Vui lòng kiểm tra lại số điện thoại.",
@@ -141,7 +123,6 @@ class LeadAIController extends Controller
                 ]);
             }
 
-            // ── Build summary để hiển thị ngay trên chat ─────────────────────
             $customerName = $user->name ?? ($leads->first()->name ?? 'Không rõ tên');
             $summary = sprintf(
                 "✅ Tìm thấy: **%s** | %d hợp đồng | %d lần liên hệ%s",
@@ -151,7 +132,6 @@ class LeadAIController extends Controller
                 $canSeeMoney ? ' | ' . $billReceipts->count() . ' thanh toán' : ''
             );
 
-            // ── Build context cho AI ──────────────────────────────────────────
             $context = [
                 'tel'           => $tel,
                 'leads'         => $leads->toArray(),
@@ -165,19 +145,13 @@ class LeadAIController extends Controller
             $ai     = new SalesAIService();
             $answer = $ai->askByPhone($context, $question);
 
-            return response()->json([
-                'answer'  => $answer,
-                'summary' => $summary,
-            ]);
+            return response()->json(['answer' => $answer, 'summary' => $summary]);
 
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
         }
     }
 
-    /**
-     * Hỏi AI tự do – không cần SĐT hay lead_id
-     */
     public function askGeneral(Request $request)
     {
         try {
@@ -185,12 +159,9 @@ class LeadAIController extends Controller
             if (empty($question)) {
                 return response()->json(['error' => 'Vui lòng nhập câu hỏi'], 400);
             }
-
             $ai     = new SalesAIService();
             $answer = $ai->askGeneral($question);
-
             return response()->json(['answer' => $answer]);
-
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
         }
